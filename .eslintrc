@@ -1,0 +1,27 @@
+{
+  "extends": "airbnb",
+  "parser": "babel-eslint",
+  "env": {
+    "browser": true,
+    "node": true
+  },
+  "settings": {
+    "import/resolver": {
+      "node": {
+        "extensions": [".js", ".ios.js", ".android.js"]
+      }
+    }
+  },
+  "globals": {
+    "__DEV__": true,
+    "jest": true,
+    "describe": true,
+    "it": true,
+    "expect": true,
+    "beforeAll": true,
+    "afterAll": true,
+    "beforeEach": true,
+    "afterEach": true,
+    "fetch": true
+  }
+}

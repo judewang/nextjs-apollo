@@ -1,0 +1,43 @@
+{
+  "name": "nextjs-apollo",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest --coverage ./src",
+    "build": "rm -rf ./*.js && babel src --ignore __tests__ --out-dir ./"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tmotx/nextjs-apollo.git"
+  },
+  "author": "tmotx",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/tmotx/nextjs-apollo/issues"
+  },
+  "homepage": "https://github.com/tmotx/nextjs-apollo#readme",
+  "files": [
+    "lib",
+    "*.js"
+  ],
+  "jest": {
+    "testEnvironment": "node",
+    "clearMocks": true
+  },
+  "devDependencies": {
+    "@babel/core": "^7.0.1",
+    "babel-core": "^7.0.0-bridge.0",
+    "babel-eslint": "^9.0.0",
+    "babel-jest": "^23.6.0",
+    "babel-plugin-lodash": "^3.3.4",
+    "babel-preset-next": "^1.2.0",
+    "eslint": "^5.5.0",
+    "eslint-config-airbnb": "^17.1.0",
+    "eslint-plugin-import": "^2.12.0",
+    "eslint-plugin-jsx-a11y": "^6.0.3",
+    "eslint-plugin-react": "^7.9.1",
+    "jest": "^23.6.0",
+    "next": "^6.1.2"
+  }
+}
