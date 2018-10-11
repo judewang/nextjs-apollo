@@ -4,8 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "jest --coverage ./src",
-    "build": "rm -rf ./*.js && babel src --ignore __tests__ --out-dir ./"
+    "test": "jest --coverage --detectOpenHandles ./src",
+    "build": "rm -rf lib && ./node_modules/.bin/babel src --ignore __tests__ --out-dir ./lib",
+    "prepublish": "npm run build",
+    "postpublish": "rm -rf lib"
   },
   "repository": {
     "type": "git",
@@ -13,13 +15,16 @@
   },
   "author": "tmotx",
   "license": "MIT",
+  "bin": {
+    "nextjs-apollo": "./lib/cli.js"
+  },
   "bugs": {
     "url": "https://github.com/tmotx/nextjs-apollo/issues"
   },
   "homepage": "https://github.com/tmotx/nextjs-apollo#readme",
   "files": [
     "lib",
-    "*.js"
+    "src"
   ],
   "jest": {
     "testEnvironment": "node",
@@ -32,12 +37,26 @@
     "babel-jest": "^23.6.0",
     "babel-plugin-lodash": "^3.3.4",
     "babel-preset-next": "^1.2.0",
+    "body-parser": "^1.18.3",
     "eslint": "^5.5.0",
     "eslint-config-airbnb": "^17.1.0",
     "eslint-plugin-import": "^2.12.0",
     "eslint-plugin-jsx-a11y": "^6.0.3",
     "eslint-plugin-react": "^7.9.1",
+    "express": "^4.16.3",
+    "graphql": "^14.0.2",
     "jest": "^23.6.0",
-    "next": "^6.1.2"
+    "next": "^6.1.2",
+    "subscriptions-transport-ws": "^0.9.14",
+    "superinstance": "^0.2.0",
+    "ws": "^6.0.0"
+  },
+  "dependencies": {
+    "@babel/cli": "^7.0.0",
+    "axios": "^0.18.0",
+    "cookie": "^0.3.1",
+    "jsonwebtoken": "^8.3.0",
+    "lodash": "^4.17.10",
+    "node-rsa": "^1.0.1"
   }
 }
