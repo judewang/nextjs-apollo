@@ -1,6 +1,6 @@
 {
   "name": "nextjs-apollo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -26,9 +26,6 @@
     "lib",
     "src"
   ],
-  "bin": {
-    "nextjs-apollo": "./lib/cli.js"
-  },
   "jest": {
     "testEnvironment": "node",
     "clearMocks": true,
