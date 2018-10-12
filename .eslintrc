@@ -23,5 +23,8 @@
     "beforeEach": true,
     "afterEach": true,
     "fetch": true
+  },
+  "rules": {
+    "react/jsx-filename-extension": [2, { "extensions": [".js", ".jsx"] }]
   }
 }

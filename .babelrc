@@ -1,6 +1,6 @@
 {
   "presets": [["next/babel", { "preset-env": { "modules": "commonjs" } }]],
   "plugins": [
-    ["lodash", { "id": ["lodash"] }]
+    ["lodash", { "id": ["lodash", "recompose", "thelper"] }]
   ]
 }

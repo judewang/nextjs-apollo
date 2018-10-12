@@ -1,0 +1,232 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`withData initApollo init 1`] = `
+ApolloClient {
+  "cache": InMemoryCache {
+    "addTypename": true,
+    "cacheKeyRoot": CacheKeyNode {
+      "children": null,
+      "key": null,
+    },
+    "config": Object {
+      "addTypename": true,
+      "cacheResolvers": undefined,
+      "dataIdFromObject": undefined,
+      "fragmentMatcher": IntrospectionFragmentMatcher {
+        "isReady": false,
+        "match": [Function],
+      },
+    },
+    "data": DepTrackingCache {
+      "data": Object {},
+      "depend": [Function],
+    },
+    "maybeBroadcastWatch": [Function],
+    "optimistic": Array [],
+    "silenceBroadcast": false,
+    "storeReader": StoreReader {
+      "cacheKeyRoot": CacheKeyNode {
+        "children": null,
+        "key": null,
+      },
+      "executeSelectionSet": [Function],
+      "executeStoreQuery": [Function],
+      "keyMaker": QueryKeyMaker {
+        "cacheKeyRoot": CacheKeyNode {
+          "children": null,
+          "key": null,
+        },
+        "perQueryKeyMakers": Map {},
+      },
+    },
+    "storeWriter": StoreWriter {},
+    "typenameDocumentCache": Map {},
+    "watches": Set {},
+  },
+  "defaultOptions": Object {},
+  "disableNetworkFetches": false,
+  "link": ApolloLink {
+    "request": [Function],
+  },
+  "mutate": [Function],
+  "query": [Function],
+  "queryDeduplication": true,
+  "reFetchObservableQueries": [Function],
+  "resetStore": [Function],
+  "resetStoreCallbacks": Array [],
+  "ssrMode": false,
+  "store": DataStore {
+    "cache": InMemoryCache {
+      "addTypename": true,
+      "cacheKeyRoot": CacheKeyNode {
+        "children": null,
+        "key": null,
+      },
+      "config": Object {
+        "addTypename": true,
+        "cacheResolvers": undefined,
+        "dataIdFromObject": undefined,
+        "fragmentMatcher": IntrospectionFragmentMatcher {
+          "isReady": false,
+          "match": [Function],
+        },
+      },
+      "data": DepTrackingCache {
+        "data": Object {},
+        "depend": [Function],
+      },
+      "maybeBroadcastWatch": [Function],
+      "optimistic": Array [],
+      "silenceBroadcast": false,
+      "storeReader": StoreReader {
+        "cacheKeyRoot": CacheKeyNode {
+          "children": null,
+          "key": null,
+        },
+        "executeSelectionSet": [Function],
+        "executeStoreQuery": [Function],
+        "keyMaker": QueryKeyMaker {
+          "cacheKeyRoot": CacheKeyNode {
+            "children": null,
+            "key": null,
+          },
+          "perQueryKeyMakers": Map {},
+        },
+      },
+      "storeWriter": StoreWriter {},
+      "typenameDocumentCache": Map {},
+      "watches": Set {},
+    },
+  },
+  "version": "2.4.2",
+  "watchQuery": [Function],
+}
+`;
+
+exports[`withData process.browser is false when NoSSR 1`] = `
+Object {
+  "value": 99,
+}
+`;
+
+exports[`withData process.browser is false when NoSSR 2`] = `
+initialize {
+  "0": Object {
+    "attribs": Object {},
+    "children": Array [
+      Object {
+        "data": "undefined value: 99",
+        "next": null,
+        "parent": [Circular],
+        "prev": null,
+        "type": "text",
+      },
+    ],
+    "name": "div",
+    "namespace": "http://www.w3.org/1999/xhtml",
+    "next": null,
+    "parent": null,
+    "prev": null,
+    "root": Object {
+      "attribs": Object {},
+      "children": Array [
+        [Circular],
+      ],
+      "name": "root",
+      "namespace": "http://www.w3.org/1999/xhtml",
+      "next": null,
+      "parent": null,
+      "prev": null,
+      "type": "root",
+      "x-attribsNamespace": Object {},
+      "x-attribsPrefix": Object {},
+    },
+    "type": "tag",
+    "x-attribsNamespace": Object {},
+    "x-attribsPrefix": Object {},
+  },
+  "_root": [Circular],
+  "length": 1,
+  "options": Object {
+    "decodeEntities": true,
+    "normalizeWhitespace": false,
+    "withDomLvl1": true,
+    "xml": false,
+  },
+}
+`;
+
+exports[`withData process.browser is false when getInitialProps 1`] = `
+Object {
+  "cache": Object {
+    "ROOT_QUERY": Object {
+      "me": "hello",
+    },
+  },
+  "value": 99,
+}
+`;
+
+exports[`withData process.browser is false when getInitialProps 2`] = `
+initialize {
+  "0": Object {
+    "attribs": Object {},
+    "children": Array [
+      Object {
+        "data": "hello value: 99",
+        "next": null,
+        "parent": [Circular],
+        "prev": null,
+        "type": "text",
+      },
+    ],
+    "name": "div",
+    "namespace": "http://www.w3.org/1999/xhtml",
+    "next": null,
+    "parent": null,
+    "prev": null,
+    "root": Object {
+      "attribs": Object {},
+      "children": Array [
+        [Circular],
+      ],
+      "name": "root",
+      "namespace": "http://www.w3.org/1999/xhtml",
+      "next": null,
+      "parent": null,
+      "prev": null,
+      "type": "root",
+      "x-attribsNamespace": Object {},
+      "x-attribsPrefix": Object {},
+    },
+    "type": "tag",
+    "x-attribsNamespace": Object {},
+    "x-attribsPrefix": Object {},
+  },
+  "_root": [Circular],
+  "length": 1,
+  "options": Object {
+    "decodeEntities": true,
+    "normalizeWhitespace": false,
+    "withDomLvl1": true,
+    "xml": false,
+  },
+}
+`;
+
+exports[`withData process.browser is false when no getInitialProps 1`] = `
+Object {
+  "cache": Object {
+    "ROOT_QUERY": Object {
+      "me": "hello",
+    },
+  },
+  "url": Object {},
+}
+`;
+
+exports[`withData process.browser is false when throw error 1`] = `
+Object {
+  "value": 99,
+}
+`;
