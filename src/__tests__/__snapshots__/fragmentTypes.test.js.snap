@@ -1,0 +1,8 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`fragmentTypes execFile 1`] = `
+"export default { __schema: { types: [{ kind: 'INTERFACE', name: 'Animal', possibleTypes: [{ name: 'Cat' }, { name: 'Dog' }] }] } };
+"
+`;
+
+exports[`fragmentTypes successfully generated json 1`] = `"{\\"__schema\\":{\\"types\\":[{\\"kind\\":\\"INTERFACE\\",\\"name\\":\\"Animal\\",\\"possibleTypes\\":[{\\"name\\":\\"Cat\\"},{\\"name\\":\\"Dog\\"}]}]}}"`;
