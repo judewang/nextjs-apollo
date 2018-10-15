@@ -67,7 +67,7 @@ export default class JsonWebToken {
   }
 
   expressParser() {
-    return async (req, res, next) => {
+    return async (req, res) => {
       const { toValues } = this;
 
       req.signIn = (model) => {
@@ -113,8 +113,6 @@ export default class JsonWebToken {
       } catch (e) {
         // empty
       }
-
-      next();
     };
   }
 

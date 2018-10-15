@@ -32,8 +32,12 @@ const instance = axios.create({
   baseURL: `http://127.0.0.1:${server.address().port}/`,
 });
 
+const jwtParser = jwt.expressParser();
+
 app.use(bodyParser.json());
-app.use(jwt.expressParser());
+app.use(async (appReq, appRes, next) => {
+  await jwtParser(appReq, appRes); next();
+});
 app.use((appReq, appRes) => { req(appReq); appRes.send('ok'); });
 
 const resolve = jest.fn(() => 1);
