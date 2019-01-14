@@ -1,0 +1,8 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`withData process.browser is false when NoSSR 1`] = `
+Object {
+  "apolloState": Object {},
+  "value": 99,
+}
+`;

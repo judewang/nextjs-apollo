@@ -1,72 +1,122 @@
 import 'isomorphic-unfetch';
+import _ from 'lodash';
+import window from 'global/window';
 import { ApolloClient } from 'apollo-client';
-import { ApolloLink, split } from 'apollo-link';
-import { HttpLink } from 'apollo-link-http';
+import { ApolloLink } from 'apollo-link';
+import { BatchHttpLink } from 'apollo-link-batch-http';
 import { WebSocketLink } from 'apollo-link-ws';
 import { RetryLink } from 'apollo-link-retry';
-// https://github.com/apollographql/apollo-client/issues/2591
-import { getMainDefinition } from 'apollo-utilities'; // eslint-disable-line
-import { InMemoryCache, IntrospectionFragmentMatcher } from 'apollo-cache-inmemory'; // eslint-disable-line
-import { thunk } from 'thelper';
+import { onError } from 'apollo-link-error';
+import { getMainDefinition } from 'apollo-utilities';
+import { InMemoryCache } from 'apollo-cache-inmemory';
+import { persistCache } from 'apollo-cache-persist';
+import localStorage from './localStorage';
 
-function create(cache, {
-  httpUri, wsUri,
-  headers: takeHeaders, context,
-  cacheResolvers, dataIdFromObject, introspectionQueryResultData,
-  ...options
-} = {}) {
-  const thunkHeaders = thunk(takeHeaders);
+function createLink(apollo, options) {
+  const { uri, retry, http } = options;
 
-  let link;
+  const retryLink = new RetryLink({ ...retry });
 
-  // Create an http link:
-  link = new ApolloLink((operation, forward) => {
-    operation.setContext(({ headers }) => ({
-      headers: {
-        ...headers,
-        ...thunkHeaders(context, headers),
-      },
-    }));
-    return forward(operation);
-  }).concat(new HttpLink({ ...options, uri: httpUri, credentials: 'same-origin' }));
-
-  // Create a WebSocket link:
-  if (wsUri && process.browser) {
-    const wsLink = new WebSocketLink({
-      ...options,
-      uri: wsUri,
-      options: {
-        reconnect: true,
-        connectionParams: () => ({
-          ...thunkHeaders(context),
-        }),
-      },
-    });
-
-    // using the ability to split links, you can send data to each link
-    // depending on what kind of operation is being sent
-    link = split(({ query }) => {
-      const { kind, operation } = getMainDefinition(query);
-      return kind === 'OperationDefinition' && operation === 'subscription';
-    }, wsLink, link);
-  }
-
-  const fragmentMatcher = new IntrospectionFragmentMatcher({ introspectionQueryResultData });
-
-  return new ApolloClient({
-    connectToDevTools: process.browser,
-    ssrMode: !process.browser, // Disables forceFetch on the server (so queries are only run once)
-    link: new RetryLink().concat(link),
-    cache: new InMemoryCache({ cacheResolvers, dataIdFromObject, fragmentMatcher }).restore(cache),
+  const errorLink = onError((result) => {
+    const { client } = apollo;
+    const { graphQLErrors: err } = result;
+    if (_.get(err, [0, 'extensions', 'code']) === 'UNAUTHENTICATED') {
+      client.signOut();
+    }
+    return options.onError(result);
   });
+
+  const authLink = new ApolloLink((operation, forward) => {
+    const { client } = apollo;
+    operation.setContext(({ headers }) => ({
+      headers: { ...headers, authorization: client.token },
+    }));
+    return forward(operation).map((response) => {
+      const { response: { headers } } = operation.getContext();
+      const token = headers.get('authorization');
+      if (token) client.token = token;
+      return response;
+    });
+  });
+
+  const batchLink = new BatchHttpLink({ uri, ...http });
+
+  const httpLink = ApolloLink.from([retryLink, errorLink, authLink, batchLink]);
+
+  if (!process.browser) return httpLink;
+
+  const { uri: wsUri, webSocketImpl, ...ws } = options.ws;
+  const wsLink = new WebSocketLink({
+    uri: wsUri || _.replace(uri, /^http/i, 'ws'),
+    options: {
+      connectionParams: () => {
+        const { client } = apollo;
+        return { authorization: client.token };
+      },
+      ...ws,
+    },
+    webSocketImpl,
+  });
+
+  return ApolloLink.split(({ query }) => {
+    const { kind, operation } = getMainDefinition(query);
+    return kind === 'OperationDefinition' && operation === 'subscription';
+  }, wsLink, httpLink);
 }
 
-export default function initApollo(cache, options) {
-  // Make sure to create a new client for every server-side request so that data
-  // isn't shared between connections (which would be bad)
-  if (!process.browser) return create(cache, options);
-  // Reuse client on the client-side
-  if (!initApollo.client) initApollo.client = create(cache, options);
+function create(initialState, ...args) {
+  const options = _.defaultsDeep(args[0], {
+    uri: '/graphql',
+    retry: {
+      attempts: {
+        retryIf: (err) => {
+          const errorCode = _.get(err, ['result', 'errors', 0, 'extensions', 'code']);
+          return errorCode === 'INTERNAL_SERVER_ERROR';
+        },
+      },
+    },
+    http: { credentials: 'same-origin' },
+    ws: {},
+    onError: () => {},
+    onSignOut: _.identity,
+  });
 
+  const cache = new InMemoryCache(options.cache).restore(initialState);
+
+  if (process.browser) persistCache({ cache, storage: localStorage });
+
+  const apollo = {};
+
+  const client = new ApolloClient({
+    connectToDevTools: process.browser && process.env.NODE_ENV === 'production',
+    ssrMode: !process.browser,
+    link: createLink(apollo, options),
+    cache,
+  });
+
+  client.signOut = () => {
+    client.token = '';
+    options.onSignOut();
+  };
+
+  Object.defineProperty(client, 'token', {
+    get() {
+      const value = localStorage.getItem('nextjs-apollo-token');
+      if (value) return `Bearer ${value}`;
+      return '';
+    },
+    set(value) {
+      localStorage.setItem('nextjs-apollo-token', value);
+    },
+  });
+
+  apollo.client = client;
+
+  return client;
+}
+
+export default function initApollo(initialState, options) {
+  if (!process.browser) return create(initialState, options);
+  if (!initApollo.client) initApollo.client = create(initialState, options);
   return initApollo.client;
 }

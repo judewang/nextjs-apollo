@@ -1,346 +1,346 @@
+import 'isomorphic-unfetch';
 import _ from 'lodash';
-import axios from 'axios';
 import http from 'http';
 import ws from 'ws';
-import {
-  execute,
-  subscribe,
-  GraphQLSchema,
-  GraphQLObjectType,
-  GraphQLInt,
-} from 'graphql';
+import gql from 'graphql-tag';
 import express from 'express';
-import bodyParser from 'body-parser';
-import {
-  SubscriptionServer,
-  SubscriptionClient,
-} from 'subscriptions-transport-ws';
+import { ApolloServer, PubSub } from 'apollo-server-express';
+import { ApolloClient } from 'apollo-client';
+import { ApolloLink } from 'apollo-link';
+import { HttpLink } from 'apollo-link-http';
+import { onError } from 'apollo-link-error';
+import { WebSocketLink } from 'apollo-link-ws';
+import { InMemoryCache } from 'apollo-cache-inmemory';
+import { getMainDefinition } from 'apollo-utilities';
 import JsonWebToken from '../JsonWebToken';
+import generateSecret from '../generateSecret';
 
-const toModel = jest.fn(values => Promise.resolve(values));
-const toModelWithVerification = jest.fn(values => Promise.resolve(values));
-const req = jest.fn();
+const pubsub = new PubSub();
 
-const jwt = new JsonWebToken({ JWT_SECRET: 'XYZ' }, { toModel, toModelWithVerification });
+const toValues = jest.fn(_.identity);
+const toModel = jest.fn(_.identity);
+const fetchCorrelation = jest.fn(values => Promise.resolve(values));
+const createCorrelation = jest.fn(values => Promise.resolve(values));
+const updateCorrelation = jest.fn(values => Promise.resolve(values));
+const resolve = jest.fn(() => 1);
+
+const jwt = new JsonWebToken({
+  JWT_SECRET: 'XYZ',
+}, {
+  toValues,
+  toModel,
+  createCorrelation,
+  updateCorrelation,
+  fetchCorrelation,
+});
+
+const typeDefs = gql`
+  type Query { viewer: Int }
+  type Subscription { viewer: Int }
+`;
+
+const resolvers = {
+  Query: {
+    viewer: (payload, args, context) => resolve(context),
+  },
+  Subscription: {
+    viewer: {
+      subscribe: (payload, args, context) => {
+        pubsub.publish('NEW_SUBSCRIPTION', context);
+        return pubsub.asyncIterator(['NEW_VIEWER']);
+      },
+    },
+  },
+};
+
+const apolloServer = new ApolloServer({
+  typeDefs,
+  resolvers,
+  context: jwt.contextParser(),
+});
 
 const app = express();
-const server = http.createServer(app);
+apolloServer.applyMiddleware({ app });
 
+const server = http.createServer(app);
+apolloServer.installSubscriptionHandlers(server);
 server.listen();
 
-const instance = axios.create({
-  baseURL: `http://127.0.0.1:${server.address().port}/`,
+const { port } = server.address();
+
+const req = { token: '', correlationId: '' };
+const res = {};
+
+const httpLink = new HttpLink({
+  uri: `http://localhost:${port}/graphql`,
+  fetch,
 });
 
-const jwtParser = jwt.expressParser();
-
-app.use(bodyParser.json());
-app.use(async (appReq, appRes, next) => {
-  await jwtParser(appReq, appRes); next();
+const authLink = new ApolloLink((operation, forward) => {
+  operation.setContext(() => ({
+    headers: {
+      authorization: req.token && `Bearer ${req.token}`,
+      Cookie: `x-correlation-id=${req.correlationId}`,
+    },
+  }));
+  return forward(operation).map((data) => {
+    const { response: { headers } } = operation.getContext();
+    res.headers = headers;
+    return data;
+  });
 });
-app.use((appReq, appRes) => { req(appReq); appRes.send('ok'); });
 
-const resolve = jest.fn(() => 1);
-const schema = new GraphQLSchema({
-  query: new GraphQLObjectType({ name: 'Query', fields: { me: { type: GraphQLInt, resolve } } }),
+const errorLink = onError(({ operation }) => {
+  const { response: { headers } } = operation.getContext();
+  res.headers = headers;
 });
 
-new SubscriptionServer({ schema, subscribe, execute, onConnect: jwt.subscriptionParser() }, { server, path: '/' }); // eslint-disable-line
+const wsLink = new WebSocketLink({
+  uri: `ws://localhost:${port}/graphql`,
+  options: {
+    connectionParams: () => ({
+      authorization: req.token && `Bearer ${req.token}`,
+    }),
+  },
+  webSocketImpl: ws,
+});
 
-describe('expressParser', () => {
+const link = ApolloLink.split(({ query }) => {
+  const { kind, operation } = getMainDefinition(query);
+  return kind === 'OperationDefinition' && operation === 'subscription';
+}, wsLink, ApolloLink.from([errorLink, authLink, httpLink]));
+
+const client = new ApolloClient({ link, cache: new InMemoryCache() });
+
+describe('contextParser', () => {
   describe('http', () => {
-    describe('fetch cookie', () => {
+    const request = (token = '', correlationId = 10) => {
+      req.token = token;
+      req.correlationId = correlationId;
+      return client.query({ query: gql`query { viewer }`, fetchPolicy: 'network-only' });
+    };
+
+    const expectToReject = async (query, contentEextend) => {
+      await expect(query.catch((error) => {
+        const { errors } = error.networkError.result;
+        expect(errors[0].message).toBe('Context creation failed: must authenticate');
+        throw error;
+      })).rejects.toEqual(
+        new Error('Network error: Response not successful: Received status code 400'),
+      );
+      expect(res.headers.get('x-content-extend')).toBe(contentEextend);
+      expect(res.headers.get('set-cookie')).toBeNull();
+    };
+
+    it('successfully get guest', async () => {
+      const { data } = await request();
+      expect(data).toEqual({ viewer: 1 });
+      expect(res.headers.get('set-cookie')).toBeNull();
+      expect(res.headers.get('authorization')).toBeNull();
+      expect(resolve).not.toHaveBeenCalledWith(expect.objectContaining({
+        auth: expect.objectContaining({ user: expect.anything() }),
+      }));
+      expect(resolve).toHaveBeenCalledTimes(1);
+    });
+
+    describe('verify token', () => {
       it('successfully get user', async () => {
-        const token = jwt.sign({ id: '10' });
-        toModel.mockImplementationOnce(values => Promise.resolve(values));
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Cookie: `access_token=${token}` },
-        });
+        const token = jwt.signWithCorrelation({ id: '10' }, { id: '1' });
+        const { data } = await request(token);
 
-        expect(toModel).toHaveBeenCalledWith({ id: '10' });
+        expect(data).toEqual({ viewer: 1 });
+        expect(toModel).toHaveBeenCalledWith({ id: '1' });
         expect(toModel).toHaveBeenCalledTimes(1);
+        expect(toValues).toHaveBeenCalledTimes(1);
+        expect(createCorrelation).toHaveBeenCalledTimes(0);
+        expect(updateCorrelation).toHaveBeenCalledTimes(0);
+        expect(fetchCorrelation).toHaveBeenCalledTimes(0);
 
-        expect(headers['set-cookie']).toBeUndefined();
-        expect(req).toHaveBeenCalledWith(expect.objectContaining({ user: { id: '10' } }));
+        expect(res.headers.get('set-cookie')).toBeNull();
+        expect(res.headers.get('authorization')).toBeNull();
+        expect(resolve).toHaveBeenCalledWith(expect.objectContaining({
+          auth: expect.objectContaining({ user: { id: '1' } }),
+        }));
       });
 
-      it('when renew token', async () => {
-        const token = jwt.sign({ id: '10' }, { expiresIn: 60 * 60 });
-        toModelWithVerification.mockImplementationOnce(values => Promise.resolve(values));
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Cookie: `access_token=${token}` },
-        });
-
-        expect(toModelWithVerification).toHaveBeenCalledWith({ id: '10' });
-        expect(toModelWithVerification).toHaveBeenCalledTimes(1);
-
-        const [, accessToken] = /^access_token=([^;]+)/gi.exec(headers['set-cookie']);
-        expect(jwt.verify(accessToken)).toEqual(expect.objectContaining({ data: { id: '10' } }));
-        expect(req).toHaveBeenCalledWith(expect.objectContaining({ user: { id: '10' } }));
+      it('when x-correlation-id is invalid', async () => {
+        const token = jwt.signWithCorrelation({ id: '9' }, { id: '1' });
+        await expectToReject(request(token), 'not match to correlation id');
       });
 
-      it('when verify values of token is invalid', async () => {
-        const token = jwt.sign({ id: '10' }, { expiresIn: 60 * 60 });
-
-        toModelWithVerification.mockImplementationOnce(() => Promise.reject(new Error()));
-
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Cookie: `access_token=${token}` },
-        });
-
-        expect(headers['set-cookie']).toBeUndefined();
-        expect(req).not.toHaveBeenCalledWith(expect.objectContaining({ user: { id: '10' } }));
-      });
-
-      it('expired', async () => {
+      it('when token expired', async () => {
         const token = jwt.sign({ id: '10' }, { expiresIn: -1 });
-
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Cookie: `access_token=${token}` },
-        });
-
-        expect(headers['set-cookie']).toBeUndefined();
-        expect(req).not.toHaveBeenCalledWith(expect.objectContaining({ user: { id: '10' } }));
+        await expectToReject(request(token), 'jwt expired');
       });
 
       it('when token is invalid', async () => {
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Cookie: 'access_token=XXYYZZ' },
-        });
-
-        expect(headers['set-cookie']).toBeUndefined();
-        expect(req).not.toHaveBeenCalledWith(expect.objectContaining({ user: { id: '10' } }));
+        await expectToReject(request('XXYYZZ'), 'jwt malformed');
       });
     });
 
-    describe('fetch authorization', () => {
-      it('successfully get user', async () => {
-        const token = jwt.sign({ id: '10' });
-        toModel.mockImplementationOnce(values => Promise.resolve(values));
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Authorization: `Bearer ${token}` },
+    describe('renew token', () => {
+      it('successfully renew token', async () => {
+        const token = jwt.sign({
+          correlation: { id: '10', secret: 'OpenDoor' },
+          user: { id: '1' },
+        }, {
+          expiresIn: 14 * (24 - 2) * 60 * 60,
         });
 
-        expect(toModel).toHaveBeenCalledWith({ id: '10' });
+        generateSecret.mockReturnValueOnce('SECRET');
+        fetchCorrelation.mockReturnValueOnce({ id: '10', secret: 'OpenDoor' });
+        const { data } = await request(token);
+
+        expect(data).toEqual({ viewer: 1 });
+        expect(toModel).toHaveBeenCalledWith({ id: '1' });
         expect(toModel).toHaveBeenCalledTimes(1);
-
-        expect(headers['set-cookie']).toBeUndefined();
-        expect(req).toHaveBeenCalledWith(expect.objectContaining({ user: { id: '10' } }));
+        expect(toValues).toHaveBeenCalledTimes(1);
+        expect(fetchCorrelation).toHaveBeenCalledWith(
+          '10', expect.objectContaining({ user: { id: '1' } }), expect.objectContaining({}),
+        );
+        expect(updateCorrelation).toHaveBeenCalledWith(
+          '10', 'SECRET', expect.objectContaining({ user: { id: '1' } }), expect.objectContaining({}),
+        );
+        expect(res.headers.get('set-cookie')).toBeNull();
+        expect(jwt.verify(res.headers.get('authorization'))).toEqual(expect.objectContaining({
+          correlation: { id: '10', secret: 'SECRET' }, user: { id: '1' },
+        }));
+        expect(resolve).toHaveBeenCalledWith(expect.objectContaining({
+          auth: expect.objectContaining({ user: { id: '1' } }),
+        }));
       });
 
-      it('when renew token', async () => {
-        const token = jwt.sign({ id: '10' }, { expiresIn: 60 * 60 });
-        toModelWithVerification.mockImplementationOnce(values => Promise.resolve(values));
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+      it('when not match to secret', async () => {
+        const token = jwt.signWithCorrelation(
+          { id: '10', secret: 'OpenDoor' },
+          { id: '1' },
+          { expiresIn: 14 * (24 - 2) * 60 * 60 },
+        );
+        fetchCorrelation.mockReturnValueOnce({ id: '10', secret: 'CloseDoor' });
+        await expectToReject(request(token), 'not match to secret');
 
-        expect(toModelWithVerification).toHaveBeenCalledWith({ id: '10' });
-        expect(toModelWithVerification).toHaveBeenCalledTimes(1);
-
-        const [, accessToken] = /^access_token=([^;]+)/gi.exec(headers['set-cookie']);
-        expect(jwt.verify(accessToken)).toEqual(expect.objectContaining({ data: { id: '10' } }));
-        expect(req).toHaveBeenCalledWith(expect.objectContaining({ user: { id: '10' } }));
+        expect(toModel).toHaveBeenCalledWith({ id: '1' });
+        expect(toModel).toHaveBeenCalledTimes(1);
+        expect(toValues).toHaveBeenCalledTimes(1);
+        expect(fetchCorrelation).toHaveBeenCalledWith(
+          '10', expect.objectContaining({ user: { id: '1' } }), expect.objectContaining({}),
+        );
+        expect(fetchCorrelation).toHaveBeenCalledTimes(1);
+        expect(updateCorrelation).toHaveBeenCalledTimes(0);
       });
     });
 
-    describe('signIn & signOut', () => {
-      it('signIn', async () => {
-        req.mockImplementation((appReq) => {
-          expect(appReq.user).toBe(undefined);
-          appReq.signIn({ id: '10' });
-          expect(appReq.user).not.toBe(undefined);
+    describe('signIn', () => {
+      beforeEach(() => {
+        resolve.mockImplementation(async ({ auth }) => {
+          expect(auth.user).toBeNull();
+          await auth.signIn({ id: '1' });
+          expect(auth.user).not.toBeNull();
+          return 9;
         });
-        const { headers } = await instance.post('graphql');
-
-        const [, accessToken] = /^access_token=([^;]+)/gi.exec(headers['set-cookie']);
-        expect(jwt.verify(accessToken)).toEqual(expect.objectContaining({ data: { id: '10' } }));
       });
 
-      it('signOut', async () => {
-        req.mockImplementation((appReq) => {
-          expect(appReq.user).not.toBe(undefined);
-          appReq.signOut();
-          expect(appReq.user).toBe(undefined);
+      describe('isUnfamiliarCorrelation is true', () => {
+        it('when x-correlation-id is not exist', async () => {
+          createCorrelation.mockImplementation(() => ({ id: '10', isUnfamiliarCorrelation: true }));
+          const { data } = await request('', '');
+          expect(data).toEqual({ viewer: 9 });
+          expect(res.headers.get('set-cookie')).toEqual('x-correlation-id=10; Max-Age=31536000; HttpOnly');
+          expect(res.headers.get('authorization')).toBeNull();
+          expect(fetchCorrelation).toHaveBeenCalledTimes(0);
+          expect(createCorrelation).toHaveBeenCalledTimes(1);
+          expect(updateCorrelation).toHaveBeenCalledTimes(0);
         });
-        const token = jwt.sign({ id: '10' });
-        const { headers } = await instance.post('graphql', {}, {
-          headers: { Cookie: `access_token=${token}` },
+
+        it('when x-correlation-id is existed', async () => {
+          fetchCorrelation.mockImplementation(id => ({ id, isUnfamiliarCorrelation: true }));
+          const { data } = await request('', '10');
+          expect(data).toEqual({ viewer: 9 });
+          expect(res.headers.get('set-cookie')).toBeNull();
+          expect(res.headers.get('authorization')).toBeNull();
+          expect(fetchCorrelation).toHaveBeenCalledTimes(1);
+          expect(createCorrelation).toHaveBeenCalledTimes(0);
+          expect(updateCorrelation).toHaveBeenCalledTimes(0);
         });
-        expect(headers['set-cookie']).toEqual(['access_token=; Max-Age=-1; HttpOnly']);
+
+        it('when not found correlation', async () => {
+          fetchCorrelation.mockImplementation(() => null);
+          createCorrelation.mockImplementation(() => ({ id: '90', isUnfamiliarCorrelation: true }));
+          const { data } = await request('', '10');
+          expect(data).toEqual({ viewer: 9 });
+          expect(res.headers.get('set-cookie')).toEqual('x-correlation-id=90; Max-Age=31536000; HttpOnly');
+          expect(res.headers.get('authorization')).toBeNull();
+          expect(fetchCorrelation).toHaveBeenCalledTimes(1);
+          expect(createCorrelation).toHaveBeenCalledTimes(1);
+          expect(updateCorrelation).toHaveBeenCalledTimes(0);
+        });
+      });
+
+      describe('isUnfamiliarCorrelation is false', () => {
+        it('when x-correlation-id is existed', async () => {
+          fetchCorrelation.mockImplementation(id => ({ id, isUnfamiliarCorrelation: false }));
+          updateCorrelation.mockImplementation((id, secret) => ({
+            id, secret, isUnfamiliarCorrelation: false,
+          }));
+          const { data } = await request('', '10');
+          expect(data).toEqual({ viewer: 9 });
+          expect(res.headers.get('set-cookie')).toBeNull();
+          expect(res.headers.get('authorization')).not.toBeNull();
+          expect(fetchCorrelation).toHaveBeenCalledTimes(1);
+          expect(createCorrelation).toHaveBeenCalledTimes(0);
+          expect(updateCorrelation).toHaveBeenCalledTimes(1);
+          expect(jwt.verifyWithCorrelation(res.headers.get('authorization'))).toEqual(expect.objectContaining({
+            correlation: { id: '10', secret: expect.anything() },
+            user: { id: '1' },
+          }));
+        });
       });
     });
   });
 
   describe('subscription', () => {
-    describe('connectionParams', () => {
-      const connect = async (token) => {
-        const socket = new SubscriptionClient(
-          `ws://127.0.0.1:${server.address().port}/`,
-          { connectionParams: { authorization: `Bearer ${token}` } },
-          ws,
-        );
-
-        let onConnected;
-        const promiseConnected = new Promise((__) => { onConnected = __; });
-        socket.onConnected(onConnected);
-
-        await promiseConnected;
-
-        let next;
-        const promiseNext = new Promise((__) => { next = __; });
-        socket.request({ query: 'query { me }' }).subscribe({ next });
-
-        await promiseNext;
-
-        return socket;
-      };
-
-      it('successfully get user', async () => {
-        const token = jwt.sign({ id: '10' });
-
-        const socket = await connect(token);
-
-        expect(toModel).toHaveBeenCalledWith({ id: '10' });
-        expect(toModel).toHaveBeenCalledTimes(1);
-
-        expect(resolve).toHaveBeenLastCalledWith(
-          undefined,
-          {},
-          expect.objectContaining({ user: { id: '10' } }),
-          expect.anything(),
-        );
-
-        socket.close();
+    const subscribe = async (token = '') => {
+      req.token = token;
+      wsLink.subscriptionClient.close();
+      let subId;
+      const result = await new Promise(async (subResolve, subReject) => {
+        subId = await pubsub.subscribe('NEW_SUBSCRIPTION', subResolve);
+        client
+          .subscribe({ query: gql`subscription { viewer }` })
+          .subscribe({ error: subReject });
       });
+      pubsub.unsubscribe(subId);
+      return result;
+    };
 
-      it('when renew token', async () => {
-        const token = jwt.sign({ id: '10' }, { expiresIn: 60 * 60 });
-
-        const socket = await connect(token);
-
-        expect(toModelWithVerification).toHaveBeenCalledWith({ id: '10' });
-        expect(toModelWithVerification).toHaveBeenCalledTimes(1);
-
-        expect(resolve).toHaveBeenLastCalledWith(
-          undefined,
-          {},
-          expect.objectContaining({ user: { id: '10' } }),
-          expect.anything(),
-        );
-
-        socket.close();
-      });
-
-      it('expired', async () => {
-        const token = jwt.sign({ id: '10' }, { expiresIn: -1 });
-
-        const socket = await connect(token);
-
-        expect(resolve).not.toHaveBeenLastCalledWith(
-          undefined,
-          {},
-          expect.objectContaining({ user: { id: '10' } }),
-          expect.anything(),
-        );
-
-        socket.close();
-      });
-
-      it('when token is invalid', async () => {
-        const socket = await connect('');
-
-        expect(resolve).not.toHaveBeenLastCalledWith(
-          undefined,
-          {},
-          expect.objectContaining({ user: { id: '10' } }),
-          expect.anything(),
-        );
-
-        socket.close();
-      });
+    it('successfully get guest', async () => {
+      const result = await subscribe('');
+      expect(result).not.toEqual(expect.objectContaining({
+        auth: expect.objectContaining({ user: expect.anything() }),
+      }));
     });
 
-    describe('cookie', () => {
-      const connect = async (cookie) => {
-        const WebSocket = _.assign((...args) => (new ws(...args, { headers: { cookie } })), ws); // eslint-disable-line
+    it('successfully get user', async () => {
+      const token = jwt.signWithCorrelation({ id: '10' }, { id: '1' });
+      const result = await subscribe(token);
+      expect(result).toEqual(expect.objectContaining({
+        auth: expect.objectContaining({ user: { id: '1' } }),
+      }));
+    });
 
-        const socket = new SubscriptionClient(
-          `ws://127.0.0.1:${server.address().port}/`,
-          {},
-          WebSocket,
-        );
+    it('when token is not in safety time', async () => {
+      const token = jwt.sign({ id: '10' }, { expiresIn: 24 * 60 * 60 });
+      await expect(subscribe(token)).rejects.toEqual({ message: 'token is not safe' });
+    });
 
-        let onConnected;
-        const promiseConnected = new Promise((__) => { onConnected = __; });
-        socket.onConnected(onConnected);
+    it('when token expired', async () => {
+      const token = jwt.sign({ id: '10' }, { expiresIn: -1 });
+      await expect(subscribe(token)).rejects.toEqual({ message: 'jwt expired' });
+    });
 
-        await promiseConnected;
-
-        let next;
-        const promiseNext = new Promise((__) => { next = __; });
-        socket.request({ query: 'query { me }' }).subscribe({ next });
-
-        await promiseNext;
-
-        return socket;
-      };
-
-      it('successfully get user', async () => {
-        const token = jwt.sign({ id: '10' });
-
-        const socket = await connect(`access_token=${token}`);
-
-        expect(toModel).toHaveBeenCalledWith({ id: '10' });
-        expect(toModel).toHaveBeenCalledTimes(1);
-
-        expect(resolve)
-          .toHaveBeenLastCalledWith(undefined, {}, expect.objectContaining({ user: { id: '10' } }), expect.anything());
-
-        socket.close();
-      });
-
-      it('when renew token', async () => {
-        const token = jwt.sign({ id: '10' }, { expiresIn: 60 * 60 });
-
-        const socket = await connect(`access_token=${token}`);
-
-        expect(toModelWithVerification).toHaveBeenCalledWith({ id: '10' });
-        expect(toModelWithVerification).toHaveBeenCalledTimes(1);
-
-        expect(resolve).toHaveBeenLastCalledWith(
-          undefined,
-          {},
-          expect.objectContaining({ user: { id: '10' } }),
-          expect.anything(),
-        );
-
-        socket.close();
-      });
-
-      it('expired', async () => {
-        const token = jwt.sign({ id: '10' }, { expiresIn: -1 });
-
-        const socket = await connect(`access_token=${token}`, token);
-
-        expect(resolve).not.toHaveBeenLastCalledWith(
-          undefined,
-          {},
-          expect.objectContaining({ user: { id: '20' } }),
-          expect.anything(),
-        );
-
-        socket.close();
-      });
-
-      it('when token is invalid', async () => {
-        const socket = await connect('access_token=XXYYZZ');
-
-        expect(resolve)
-          .not.toHaveBeenLastCalledWith(undefined, {}, expect.objectContaining({ user: { id: '10' } }), expect.anything());
-
-        socket.close();
-      });
+    it('when token is invalid', async () => {
+      const token = 'XXYYZZ';
+      await expect(subscribe(token)).rejects.toEqual({ message: 'jwt malformed' });
     });
   });
 });

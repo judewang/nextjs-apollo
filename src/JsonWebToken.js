@@ -1,9 +1,12 @@
 import _ from 'lodash';
 import NodeRSA from 'node-rsa';
 import cookie from 'cookie';
+import { assertEnv } from 'thelper';
 import jsonwebtoken from 'jsonwebtoken';
+import { AuthenticationError } from 'apollo-server-express';
+import generateSecret from './generateSecret';
 
-const EXPIRED_IN = 7 * 24 * 60 * 60; // 7 days in seconds
+const EXPIRED_IN = 14 * 24 * 60 * 60; // 7 days in seconds
 
 export default class JsonWebToken {
   static generateKey() {
@@ -31,22 +34,23 @@ export default class JsonWebToken {
       audience: _.defaultTo(env.JWT_AUDIENCE, 'everyone'),
     };
 
-    const { toValues, toModel, toModelWithVerification } = _.defaults(handlers, {
-      toValues: obj => obj.valueOf(),
+    _.assign(this, _.pick(_.defaults(handlers, {
+      toValues: _.identity,
       toModel: _.identity,
-      toModelWithVerification: _.identity,
-    });
-
-    this.toValues = toValues;
-    this.toModel = toModel;
-    this.toModelWithVerification = toModelWithVerification;
+      createCorrelation: _.identity,
+      updateCorrelation: _.identity,
+      fetchCorrelation: _.identity,
+    }), [
+      'toValues', 'toModel',
+      'createCorrelation', 'updateCorrelation', 'fetchCorrelation',
+    ]));
 
     return this;
   }
 
   sign(data, options) {
     const opt = _.defaults({}, options, this.options, this.algorithm);
-    return jsonwebtoken.sign({ data }, this.privateKey, opt);
+    return jsonwebtoken.sign(data, this.privateKey, opt);
   }
 
   verify(token, options) {
@@ -54,91 +58,120 @@ export default class JsonWebToken {
     return jsonwebtoken.verify(token, this.publicKey, opt);
   }
 
-  async fetchModel(token) {
-    const { toModel, toModelWithVerification } = this;
-    const { data, exp } = this.verify(token);
+  signWithCorrelation(correlation, user, ...args) {
+    return this.sign({ correlation, user: this.toValues(user) }, ...args);
+  }
+
+  verifyWithCorrelation(token, ...args) {
+    const { correlation, user, exp } = this.verify(token, ...args);
     const expiresOn = exp - (Date.now() / 1000);
-
-    const renewToken = expiresOn < (EXPIRED_IN - (60 * 60));
-
-    const user = await (renewToken ? toModelWithVerification(data) : toModel(data));
-
-    return { user, renewToken };
+    return { correlation, user: this.toModel(user), expiresOn };
   }
 
-  expressParser() {
-    return async (req, res) => {
-      const { toValues } = this;
+  async renewWithCorrelation({ id, secret }, auth, req) {
+    const correlation = await this.fetchCorrelation(id, auth, req);
+    if (!(correlation && correlation.secret === secret)) throw new Error('not match to secret');
 
-      req.signIn = (model) => {
-        req.user = model;
+    const renew = String(generateSecret());
 
-        const values = toValues(model);
-        res.append('Set-Cookie', cookie.serialize(
-          'access_token',
-          this.sign(values),
-          { httpOnly: true, maxAge: 60 * 60 * 24 * 7 },
-        ));
-      };
-
-      req.signOut = () => {
-        req.user = undefined;
-
-        res.append('Set-Cookie', cookie.serialize(
-          'access_token',
-          '',
-          { httpOnly: true, maxAge: -1 },
-        ));
-      };
-
-      const cookies = cookie.parse(_.get(req, ['headers', 'cookie'], ''));
-
-      try {
-        if (cookies.access_token) {
-          const { user, renewToken } = await this.fetchModel(cookies.access_token);
-          req.user = user;
-          if (renewToken) req.signIn(user);
-        }
-      } catch (e) {
-        // empty
-      }
-
-      try {
-        const token = /^Bearer (.+)$/.exec(req.headers.authorization);
-        if (token) {
-          const { user, renewToken } = await this.fetchModel(token[1]);
-          req.user = user;
-          if (renewToken) req.signIn(user);
-        }
-      } catch (e) {
-        // empty
-      }
-    };
+    await this.updateCorrelation(id, renew, auth, req);
+    return this.signWithCorrelation({ id, secret: renew }, auth.user);
   }
 
-  subscriptionParser() {
-    return async (params, ws) => {
-      const cookies = cookie.parse(_.get(ws, ['upgradeReq', 'headers', 'cookie'], ''));
+  async declareCorrelation(id, secret, auth, req) {
+    const correlation = id && await this.fetchCorrelation(id, auth, req);
+    if (correlation) return correlation;
+
+    return this.createCorrelation(auth, req);
+  }
+
+  async registerCorrelation(id, auth, req) {
+    const correlation = await this.declareCorrelation(id, auth, req);
+
+    if (correlation.isUnfamiliarCorrelation) return correlation;
+
+    return this.updateCorrelation(id, String(generateSecret()), auth, req);
+  }
+
+  async convertTokenToUser(auth, req, res) {
+    const { token, correlationId } = auth;
+    if (!token) return null;
+
+    const { options } = this;
+    const { correlation, user, expiresOn } = this.verifyWithCorrelation(token);
+
+    const isExpired = expiresOn < (options.expiresIn - (60 * 60));
+
+    if (req) {
+      if (!(correlationId && correlationId === correlation.id)) {
+        throw new Error('not match to correlation id');
+      }
+
+      if (isExpired) {
+        res.append('authorization', await this.renewWithCorrelation(correlation, { ...auth, user }, req));
+      }
+
+      return user;
+    }
+
+    if (isExpired) throw new Error('token is not safe');
+    return user;
+  }
+
+  contextParser() {
+    return async (context) => {
+      const { req, res, connection } = context;
+
+      const auth = {
+        signIn: async (user) => {
+          auth.user = user;
+
+          const correlation = await this.registerCorrelation(auth.correlationId, auth, req);
+
+          if (auth.correlationId !== correlation.id) {
+            res.append('Set-Cookie', cookie.serialize(
+              'x-correlation-id',
+              correlation.id,
+              { httpOnly: true, maxAge: 365 * 24 * 60 * 60 },
+            ));
+          }
+
+          if (!correlation.isUnfamiliarCorrelation) {
+            const { id, secret } = correlation;
+            const token = this.signWithCorrelation({ id, secret }, auth.user);
+            res.append('authorization', token);
+            return { correlation, token };
+          }
+
+          return { correlation };
+        },
+      };
+
       try {
-        if (cookies.access_token) {
-          const { user } = await this.fetchModel(cookies.access_token);
-          return { ...params, user };
-        }
+        const { authorization } = connection ? connection.context : req.headers;
+        const [, token] = /^Bearer (.+)$/.exec(authorization);
+        auth.token = token;
       } catch (e) {
         // empty
       }
 
       try {
-        const token = /^Bearer (.+)$/.exec(params.authorization);
-        if (token) {
-          const { user } = await this.fetchModel(token[1]);
-          return { ...params, user };
-        }
+        auth.correlationId = cookie.parse(req.headers.cookie)['x-correlation-id'];
       } catch (e) {
         // empty
       }
 
-      return params;
+      try {
+        const user = await this.convertTokenToUser(auth, req, res);
+        auth.user = user;
+        return { ...context, auth };
+      } catch (e) {
+        assertEnv(() => {
+          if (!res) throw new AuthenticationError(e.message);
+          res.append('X-Content-Extend', e.message);
+        });
+        throw new AuthenticationError('must authenticate');
+      }
     };
   }
 }
