@@ -8,7 +8,7 @@ describe('jwt', () => {
   it('use JWT_SECRET to sign & verify', async () => {
     const jwt = new JsonWebToken({ JWT_SECRET: 'XYZ' });
     expect(jwt).toMatchSnapshot();
-    const { data } = jwt.verify(jwt.sign({ id: '10' }));
+    const data = jwt.verify(jwt.sign({ id: '10' }));
     expect(data.id).toBe('10');
   });
 
@@ -17,7 +17,7 @@ describe('jwt', () => {
 
     const jwt = new JsonWebToken({ PRIVATE_KEY });
     expect(jwt).toMatchSnapshot();
-    const { data } = jwt.verify(jwt.sign({ id: '10', acr: 'NONO' }));
+    const data = jwt.verify(jwt.sign({ id: '10', acr: 'NONO' }));
     expect(data.id).toBe('10');
   });
 
@@ -35,7 +35,7 @@ describe('jwt', () => {
     const key = JsonWebToken.generateKey();
 
     const jwt = new JsonWebToken({ PRIVATE_KEY: key });
-    const { data } = jwt.verify(jwt.sign({ id: '10' }));
+    const data = jwt.verify(jwt.sign({ id: '10' }));
     expect(data.id).toBe('10');
   });
 });

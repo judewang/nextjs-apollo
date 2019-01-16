@@ -1,6 +1,7 @@
 {
   "presets": [["next/babel", { "preset-env": { "modules": "commonjs" } }]],
   "plugins": [
-    ["lodash", { "id": ["lodash", "recompose", "thelper"] }]
+    ["lodash", { "id": ["lodash", "recompose", "thelper"] }],
+    ["@babel/plugin-proposal-pipeline-operator", { "proposal": "minimal" }]
   ]
 }

@@ -2,6 +2,8 @@
 
 exports[`jwt setup JWT_ISSUER, JWT_EXPIRES_IN and JWT_AUDIENCE 1`] = `
 JsonWebToken {
+  "createCorrelation": [Function],
+  "fetchCorrelation": [Function],
   "options": Object {
     "audience": "for_tester",
     "expiresIn": 86400,
@@ -11,24 +13,26 @@ JsonWebToken {
   "privateKey": "XYZ",
   "publicKey": "XYZ",
   "toModel": [Function],
-  "toModelWithVerification": [Function],
   "toValues": [Function],
+  "updateCorrelation": [Function],
 }
 `;
 
 exports[`jwt use JWT_SECRET to sign & verify 1`] = `
 JsonWebToken {
+  "createCorrelation": [Function],
+  "fetchCorrelation": [Function],
   "options": Object {
     "audience": "everyone",
-    "expiresIn": 604800,
+    "expiresIn": 1209600,
     "issuer": "jwt",
     "subject": "jwt",
   },
   "privateKey": "XYZ",
   "publicKey": "XYZ",
   "toModel": [Function],
-  "toModelWithVerification": [Function],
   "toValues": [Function],
+  "updateCorrelation": [Function],
 }
 `;
 
@@ -37,9 +41,11 @@ JsonWebToken {
   "algorithm": Object {
     "algorithm": "RS256",
   },
+  "createCorrelation": [Function],
+  "fetchCorrelation": [Function],
   "options": Object {
     "audience": "everyone",
-    "expiresIn": 604800,
+    "expiresIn": 1209600,
     "issuer": "jwt",
     "subject": "jwt",
   },
@@ -1732,7 +1738,7 @@ bVLAALyYqqLVEznjNuGpsCtKGokjJ2hFVCmt0CBFIlIBtbePRh/xCNdw4K0Rs7J3
 swIDAQAB
 -----END PUBLIC KEY-----",
   "toModel": [Function],
-  "toModelWithVerification": [Function],
   "toValues": [Function],
+  "updateCorrelation": [Function],
 }
 `;
