@@ -78,7 +78,7 @@ export default class JsonWebToken {
     return this.signWithCorrelation({ id, secret: renew }, auth.user);
   }
 
-  async declareCorrelation(id, secret, auth, req) {
+  async declareCorrelation(id, auth, req) {
     const correlation = id && await this.fetchCorrelation(id, auth, req);
     if (correlation) return correlation;
 
